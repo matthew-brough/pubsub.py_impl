@@ -1,0 +1,158 @@
+# EGRESS-BALANCED pubsub.py harness — REPLICATED ingest + SHARDED consumers.
+# Producers broadcast each message to EVERY broker (every broker holds the full
+# stream); nginx balances CONSUMER egress, sharding Z consumers across Y brokers
+# (~Z/Y each). This is the fan-out scaling model for few-producers/giant-consumers.
+# Default 2:2:6:1 (producers:brokers:consumers:observer). Contrast: ../ingress_balanced_harness.
+#
+#   postgres  — shared durable layer + audit trail (broker_id per row -> "which
+#               machine handled it", meaningful because every broker mirrors all)
+#   broker    — elastic broker replicas on shared Postgres (DNS-discovered)
+#   nginx     — TCP (L4) EGRESS: dynamic discovery + least_conn, balances CONSUMERS
+#   producer  — broadcaster: mirrors each message to all brokers (x2, direct)
+#   consumer  — sharded sink: one connection via nginx -> one broker (x6)
+#   observer  — firehose from ONE broker (via nginx) + fleet fan-in + scrape all + PG
+#
+# Run:    docker compose up --build          then open http://localhost:8080
+# Scale:  docker compose up --build --scale broker=4 --scale consumer=24
+#         (giant consumers is the point — shard them across more brokers)
+# Push:   PRODUCER_RATE=max PG_SYNCHRONOUS_COMMIT=off docker compose up --build
+name: pubsub-egress-balanced
+
+x-pubsub-image: &pubsub-image
+  build: .
+  networks: [dist]
+  restart: unless-stopped
+
+x-broker-env: &broker-env
+  PG_DSN: postgresql://pubsub:pubsub@postgres:5432/pubsub
+  # Shared audit trail needs postgres; none|memory are per-broker (no audit),
+  # used to isolate transport/fanout cost from the shared DB in the bench.
+  DURABILITY: ${DURABILITY:-postgres}
+  OTEL_ENABLED: "1"
+  OTEL_PROM_PORT: "9464"
+  RETRY_MAX_ATTEMPTS: "5"
+  RETRY_BASE: "0.1"
+  RETRY_CAP_EXPONENT: "2"
+  # Postgres-specific durability tuning (no SQLite equivalent):
+  PG_SYNCHRONOUS_COMMIT: ${PG_SYNCHRONOUS_COMMIT:-on}   # "off" -> higher ceiling
+  PG_MAX_WRITERS: ${PG_MAX_WRITERS:-4}                   # concurrent commit workers
+  PG_POOL_MAX: ${PG_POOL_MAX:-24}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    networks: [dist]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pubsub
+      POSTGRES_PASSWORD: pubsub
+      POSTGRES_DB: pubsub
+    # Headroom for X+Y+Z+observer connections and write-heavy load.
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - synchronous_commit=on
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pubsub -d pubsub"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  # Elastic broker pool. INSTANCE_ID defaults to the container hostname, so each
+  # replica is distinct; OTEL_SERVICE_NAME is shared (the observer distinguishes
+  # brokers by their discovered IP). Scale with: --scale broker=N
+  broker:
+    <<: *pubsub-image
+    command: python -m dclient.controller
+    environment:
+      <<: *broker-env
+      BIND_HOST: 0.0.0.0
+      OTEL_SERVICE_NAME: pubsub-broker
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8765), 2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    deploy:
+      replicas: 2
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    networks: [dist]
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      broker:
+        condition: service_healthy
+
+  producer:
+    <<: *pubsub-image
+    command: python -m dclient.producer
+    environment:
+      # REPLICATED INGEST: broadcast each message to every broker replica
+      # (DNS-discovered), so all brokers hold the full stream. Producers do NOT
+      # go through nginx — they connect to all brokers directly.
+      BROKER_SERVICE: broker
+      BROKER_PORT: "8765"
+      RERESOLVE_SECONDS: ${RERESOLVE_SECONDS:-10}
+      PRODUCER_RATE: ${PRODUCER_RATE:-2000}
+      PRODUCER_CONCURRENCY: ${PRODUCER_CONCURRENCY:-4}
+      PAYLOAD_BYTES: ${PAYLOAD_BYTES:-256}
+    deploy:
+      replicas: 2
+    depends_on:
+      broker:
+        condition: service_healthy
+
+  consumer:
+    <<: *pubsub-image
+    command: python -m dclient.consumer
+    environment:
+      # Sharded via the egress LB: one connection to nginx -> one broker. Every
+      # broker has the full stream, so a single connection sees everything.
+      PUBSUB_HOST: nginx
+      PUBSUB_PORT: "8765"
+      NACK_RATE: ${NACK_RATE:-0.02}
+      POISON_EVERY: ${POISON_EVERY:-500}
+      CONSUMER_WORK_MS: ${CONSUMER_WORK_MS:-0}
+    deploy:
+      replicas: 6
+    depends_on:
+      nginx:
+        condition: service_started
+
+  observer:
+    <<: *pubsub-image
+    command: uvicorn dclient.observer.app:app --host 0.0.0.0 --port 8080
+    environment:
+      # Throughput firehose via nginx = ONE broker's full stream (no Y× count).
+      PUBSUB_HOST: nginx
+      PUBSUB_PORT: "8765"
+      # Fleet + OTel scrape need every broker, so also DNS-discover the service.
+      BROKER_SERVICE: broker
+      BROKER_PORT: "8765"
+      RERESOLVE_SECONDS: ${RERESOLVE_SECONDS:-10}
+      PG_DSN: postgresql://pubsub:pubsub@postgres:5432/pubsub
+    ports:
+      - "8080:8080"
+    depends_on:
+      nginx:
+        condition: service_started
+
+volumes:
+  pg-data:
+
+networks:
+  dist:

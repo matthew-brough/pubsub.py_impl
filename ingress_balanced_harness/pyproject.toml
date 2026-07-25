@@ -1,0 +1,19 @@
+[project]
+name = "pubsub-ingress-balanced-harness"
+version = "0.1.0"
+description = "Ingress-balanced multi-broker pubsub.py harness: nginx-LB producers, fan-in consumers, shared Postgres durability + audit trail, single observation platform."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pubsub-py[otel,fast]",
+    "asyncpg>=0.30",
+    "msgpack>=1.0",
+    "fastapi>=0.115",
+    "opentelemetry-exporter-prometheus>=0.48b0",
+    "opentelemetry-sdk>=1.27",
+    "uvicorn[standard]>=0.30",
+]
+
+# perf/sync-fanout is merged into master, so track master directly.
+[tool.uv.sources]
+pubsub-py = { git = "https://github.com/matthew-brough/pubsub.py.git", branch = "master" }
