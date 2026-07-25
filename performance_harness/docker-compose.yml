@@ -1,0 +1,93 @@
+# Throughput harness for pubsub.py.
+#   controller  — broker over TCP (env-tunable retry), sqlite on a shared volume
+#   producer    — load generator (stamps seq + pub_ts)
+#   consumer    — fast-acking sink, small nack + poison fraction -> DLQ
+#   management  — FastAPI analytics sidecar, dashboard on http://localhost:8080
+#
+# Run:  docker compose up --build   then open http://localhost:8080
+# Push harder:  PRODUCER_RATE=max PRODUCER_CONCURRENCY=16 docker compose up --build
+name: pubsub-throughput
+
+x-image: &image
+  build: .
+  networks: [pubsub]
+  restart: unless-stopped
+
+services:
+  controller:
+    <<: *image
+    command: python -m testclient.controller
+    environment:
+      BIND_HOST: 0.0.0.0
+      PUBSUB_PORT: 8765
+      DURABILITY: ${DURABILITY:-sqlite}
+      PUBSUB_DB: /data/pubsub.db
+      # Tight retry so poison messages reach the DLQ in seconds (lib default is
+      # budget 10 / base 1s ≈ 8 min).
+      RETRY_MAX_ATTEMPTS: 5
+      RETRY_BASE: 0.1
+      RETRY_CAP_EXPONENT: 2
+      # Broker-side OpenTelemetry metrics (Prometheus exporter).
+      OTEL_ENABLED: "1"
+      OTEL_PROM_PORT: 9464
+    ports:
+      - "9464:9464"   # broker OTel /metrics (also scraped by the sidecar)
+    volumes:
+      - pubsub-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8765), 2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  producer:
+    <<: *image
+    command: python -m testclient.producer
+    environment:
+      PUBSUB_HOST: controller
+      PUBSUB_PORT: 8765
+      # Moderate default keeps the consumer draining so retries/DLQ show cleanly.
+      # Push toward saturation with PRODUCER_RATE=max PRODUCER_CONCURRENCY=16 to
+      # find the ceiling (the dashboard then shows the knee + sidecar eviction).
+      PRODUCER_RATE: ${PRODUCER_RATE:-100}   # total msg/s target, or "max"
+      PRODUCER_CONCURRENCY: ${PRODUCER_CONCURRENCY:-4}
+      PAYLOAD_BYTES: ${PAYLOAD_BYTES:-256}
+    depends_on:
+      controller:
+        condition: service_healthy
+
+  consumer:
+    <<: *image
+    command: python -m testclient.consumer
+    environment:
+      PUBSUB_HOST: controller
+      PUBSUB_PORT: 8765
+      NACK_RATE: ${NACK_RATE:-0.05}          # random transient nacks (retries)
+      POISON_EVERY: ${POISON_EVERY:-200}      # every Nth msg -> always nack -> DLQ
+      CONSUMER_WORK_MS: ${CONSUMER_WORK_MS:-0}
+    depends_on:
+      controller:
+        condition: service_healthy
+
+  management:
+    <<: *image
+    command: uvicorn testclient.management.app:app --host 0.0.0.0 --port 8080
+    environment:
+      PUBSUB_HOST: controller
+      PUBSUB_PORT: 8765
+      PUBSUB_DB: /data/pubsub.db
+    ports:
+      - "8080:8080"
+    volumes:
+      # Read-only usage, but mounted RW so WAL's -shm/-wal sidecars work.
+      - pubsub-data:/data
+    depends_on:
+      controller:
+        condition: service_healthy
+
+volumes:
+  pubsub-data:
+
+networks:
+  pubsub:

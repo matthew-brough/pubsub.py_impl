@@ -1,0 +1,14 @@
+.venv/
+.git/
+.gitignore
+.claude/
+.mcp.json
+__pycache__/
+*.pyc
+*.db
+*.db-*
+SPEC.md
+AGENTS.md
+CLAUDE.md
+README.md
+main.py

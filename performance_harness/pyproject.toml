@@ -1,0 +1,20 @@
+[project]
+name = "pubsub-py-impl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "pubsub-py[otel,fast]",
+]
+
+[dependency-groups]
+testclient = [
+    "fastapi>=0.115",
+    "opentelemetry-exporter-prometheus>=0.48b0",
+    "opentelemetry-sdk>=1.27",
+    "uvicorn[standard]>=0.30",
+]
+
+[tool.uv.sources]
+pubsub-py = { git = "https://github.com/matthew-brough/pubsub.py.git", branch = "master" }
