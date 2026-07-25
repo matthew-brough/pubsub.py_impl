@@ -1,6 +1,6 @@
 # pubsub.py — Matrix Rerun on `[otel,fast]` (uvloop + v0.2.1)
 
-> Raw appendix — the run-by-run record behind `BENCHMARKS.md`. Superseded by it
+> Raw appendix — the run-by-run record behind the library README's Performance summary. Superseded by it
 > for conclusions; kept for method and per-regime evidence. Absolute rates are
 > host-bound; read them as shape, not spec.
 

@@ -2,9 +2,9 @@
 
 Load-testing rigs that drive the real [`pubsub.py`](https://github.com/matthew-brough/pubsub.py)
 TCP broker in Docker and scrape cluster-aggregated stats. This repo is the
-**method + apparatus**; the findings it produced are synthesised in the library's
-[`BENCHMARKS.md`](https://github.com/matthew-brough/pubsub.py/blob/master/BENCHMARKS.md)
-— go there for results, ratios, and what they mean.
+**method + apparatus**; the findings it produced are synthesised in the library
+README's [Performance](https://github.com/matthew-brough/pubsub.py#performance)
+section — go there for results, ratios, and what they mean.
 
 Every harness reports **relative behaviour** (ratios, percentages, quality
 metrics like `ackr` / `balance` / `repl_factor`), never absolute throughput —
@@ -53,9 +53,9 @@ Driver run outputs (`*_results*.json`, `*_progress*.log`, `*.out`) are
 
 ## `docs/` — raw appendix
 
-The unabridged per-run measurement writeups that predate and back
-`BENCHMARKS.md`, kept as raw source (not maintained as living docs). Numbered in
-run order:
+The unabridged per-run measurement writeups that predate and back the library
+README's Performance summary, kept as raw source (not maintained as living
+docs). Numbered in run order:
 
 - `01-perf-log.md` — single-node publish-accept ceiling; sqlite-vs-memory.
 - `02-rerun.md` — post-broker-fix rerun (collapse gone; memory scales).

@@ -1,6 +1,6 @@
 # pubsub.py — Durability × Topology Matrix (extended set)
 
-> Raw appendix — the run-by-run record behind `BENCHMARKS.md`. Superseded by it
+> Raw appendix — the run-by-run record behind the library README's Performance summary. Superseded by it
 > for conclusions; kept for method and per-regime evidence. Absolute rates are
 > host-bound; read them as shape, not spec.
 
