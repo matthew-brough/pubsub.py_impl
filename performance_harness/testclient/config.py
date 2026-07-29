@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import socket
+import ssl
 from collections.abc import Mapping
 
 from pubsub.auth import Capability, Principal, StaticAuthenticator
@@ -105,6 +106,8 @@ CONNECT_RETRY_SECONDS = float(os.environ.get("CONNECT_RETRY_SECONDS", "30"))
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "pubsub-harness")
 AUTH_IDENTITY = os.environ.get("AUTH_IDENTITY", "pubsub-harness")
 AUTH_CREDENTIALS: Mapping[str, MessagePackValue] = {"token": AUTH_TOKEN}
+TLS_CERT = os.environ.get("TLS_CERT", "/app/certs/server.crt")
+TLS_KEY = os.environ.get("TLS_KEY", "/app/certs/server.key")
 
 
 def _flag(name: str, default: str = "1") -> bool:
@@ -118,7 +121,26 @@ def make_authenticator() -> StaticAuthenticator:
     )
 
 
-async def verify_upstream_features(host: str, port: int, topic: str) -> None:
+def make_server_tls_context() -> ssl.SSLContext:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(TLS_CERT, TLS_KEY)
+    return context
+
+
+def make_client_tls_context() -> ssl.SSLContext:
+    context = ssl.create_default_context(cafile=TLS_CERT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
+async def verify_upstream_features(
+    host: str,
+    port: int,
+    topic: str,
+    *,
+    ssl_context: ssl.SSLContext | None = None,
+) -> None:
     """Fail broker startup unless auth, claims, and packed delivery all work."""
     try:
         await BrokerClient.connect(
@@ -126,6 +148,7 @@ async def verify_upstream_features(host: str, port: int, topic: str) -> None:
             port,
             reconnect=False,
             auth={"token": f"{AUTH_TOKEN}-invalid"},
+            ssl=ssl_context,
         )
     except AuthError as exc:
         if exc.code != "auth_rejected":
@@ -138,6 +161,7 @@ async def verify_upstream_features(host: str, port: int, topic: str) -> None:
         port,
         reconnect=False,
         auth=AUTH_CREDENTIALS,
+        ssl=ssl_context,
     )
     try:
         await client.register_topic(topic, replayable=False)

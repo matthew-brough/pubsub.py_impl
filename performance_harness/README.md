@@ -34,7 +34,10 @@ Every service authenticates with `StaticAuthenticator`; `AUTH_TOKEN` and
 `AUTH_IDENTITY` default to `pubsub-harness`. Controller startup rejects an
 invalid token, then verifies valid auth, topic claim/release, and a delivery
 round trip through packed transport before healthcheck can pass. Matrix load
-starts only after producer topic claims succeed.
+starts only after producer topic claims succeed. A second, ephemeral TLS
+listener repeats the probe over TLS 1.2+ with a trusted self-signed test
+certificate, then closes; measured throughput stays plaintext so encryption
+cost does not confound transport comparisons.
 
 ### Fleet observability (multiple producers / consumers)
 Each producer and consumer heartbeats its own stats through the broker on

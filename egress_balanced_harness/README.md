@@ -79,7 +79,10 @@ Every service authenticates with `StaticAuthenticator`; `AUTH_TOKEN` and
 `AUTH_IDENTITY` default to `pubsub-harness`. Each broker startup rejects an
 invalid token, then verifies valid auth, durable topic claim/release, and a
 delivery round trip through packed transport. Producers claim every replicated
-data topic on each broker before entering load.
+data topic on each broker before entering load. Each broker also repeats the
+probe on an ephemeral TLS 1.2+ listener using a trusted self-signed test
+certificate; measured cluster traffic stays plaintext to isolate transport
+changes from encryption cost.
 
 ## Services
 

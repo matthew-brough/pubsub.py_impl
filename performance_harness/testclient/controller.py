@@ -62,6 +62,24 @@ async def run() -> None:
         server.port,
         f"_harness.auth_probe.{config.INSTANCE_ID}",
     )
+    tls_server = BrokerServer(
+        broker,
+        host="127.0.0.1",
+        port=0,
+        authenticator=config.make_authenticator(),
+        ssl=config.make_server_tls_context(),
+    )
+    await tls_server.start()
+    try:
+        await config.verify_upstream_features(
+            "127.0.0.1",
+            tls_server.port,
+            f"_harness.tls_probe.{config.INSTANCE_ID}",
+            ssl_context=config.make_client_tls_context(),
+        )
+    finally:
+        await tls_server.close()
+    log.info("auth + TLS + packed-delivery startup probes passed")
     import asyncio
 
     loop_impl = type(asyncio.get_running_loop()).__module__.split(".")[0]
