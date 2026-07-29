@@ -23,7 +23,12 @@ x-pubsub-image: &pubsub-image
   networks: [dist]
   restart: unless-stopped
 
+x-auth-env: &auth-env
+  AUTH_TOKEN: ${AUTH_TOKEN:-pubsub-harness}
+  AUTH_IDENTITY: ${AUTH_IDENTITY:-pubsub-harness}
+
 x-broker-env: &broker-env
+  <<: *auth-env
   PG_DSN: postgresql://pubsub:pubsub@postgres:5432/pubsub
   # Shared audit trail needs postgres; none|memory are per-broker (no audit),
   # used to isolate transport/fanout cost from the shared DB in the bench.
@@ -101,6 +106,7 @@ services:
     <<: *pubsub-image
     command: python -m dclient.producer
     environment:
+      <<: *auth-env
       # REPLICATED INGEST: broadcast each message to every broker replica
       # (DNS-discovered), so all brokers hold the full stream. Producers do NOT
       # go through nginx — they connect to all brokers directly.
@@ -120,6 +126,7 @@ services:
     <<: *pubsub-image
     command: python -m dclient.consumer
     environment:
+      <<: *auth-env
       # Sharded via the egress LB: one connection to nginx -> one broker. Every
       # broker has the full stream, so a single connection sees everything.
       PUBSUB_HOST: nginx
@@ -137,6 +144,7 @@ services:
     <<: *pubsub-image
     command: uvicorn dclient.observer.app:app --host 0.0.0.0 --port 8080
     environment:
+      <<: *auth-env
       # Throughput firehose via nginx = ONE broker's full stream (no Y× count).
       PUBSUB_HOST: nginx
       PUBSUB_PORT: "8765"

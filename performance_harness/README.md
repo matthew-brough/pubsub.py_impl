@@ -30,6 +30,12 @@ percentiles (p50/p95/p99), a msg/s sparkline, per-topic throughput, the DLQ,
 retained-history counts, and a **live fleet panel** (per-producer and
 per-consumer rates), updating ~1/s over SSE.
 
+Every service authenticates with `StaticAuthenticator`; `AUTH_TOKEN` and
+`AUTH_IDENTITY` default to `pubsub-harness`. Controller startup rejects an
+invalid token, then verifies valid auth, topic claim/release, and a delivery
+round trip through packed transport before healthcheck can pass. Matrix load
+starts only after producer topic claims succeed.
+
 ### Fleet observability (multiple producers / consumers)
 Each producer and consumer heartbeats its own stats through the broker on
 `_stats.<kind>.<instance>`; the sidecar collects them on a **dedicated

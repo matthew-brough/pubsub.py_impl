@@ -9,8 +9,12 @@ import asyncio
 import logging
 import os
 import socket
+from collections.abc import Mapping
 
+from pubsub.auth import Capability, Principal, StaticAuthenticator
+from pubsub.shared.types import MessagePackValue
 from pubsub.transport.client import BrokerClient
+from pubsub.transport.wire import AuthError
 
 # --- instance identity + fleet telemetry ----------------------------------
 # Each producer/consumer heartbeats its own stats through the broker on
@@ -35,6 +39,7 @@ async def heartbeat_loop(client, kind: str, payload_fn) -> None:
     connection is busy (e.g. a flooded consumer).
     """
     topic = stats_topic(kind)
+    await client.register_topic(topic, replayable=False)
     while True:
         await asyncio.sleep(HEARTBEAT_EVERY)
         try:
@@ -93,9 +98,61 @@ CONSUMER_WORK_MS = float(os.environ.get("CONSUMER_WORK_MS", "0"))
 STATS_INTERVAL = float(os.environ.get("STATS_INTERVAL", "1.0"))
 CONNECT_RETRY_SECONDS = float(os.environ.get("CONNECT_RETRY_SECONDS", "30"))
 
+# --- authentication + feature probe ---------------------------------------
+# Shared identity intentionally preserves existing multi-producer semantics:
+# every harness process may reclaim the same concrete topic without introducing
+# authz partitioning as a new benchmark variable.
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "pubsub-harness")
+AUTH_IDENTITY = os.environ.get("AUTH_IDENTITY", "pubsub-harness")
+AUTH_CREDENTIALS: Mapping[str, MessagePackValue] = {"token": AUTH_TOKEN}
+
 
 def _flag(name: str, default: str = "1") -> bool:
     return os.environ.get(name, default).lower() in ("1", "true", "yes", "on")
+
+
+def make_authenticator() -> StaticAuthenticator:
+    grants = {capability: (">",) for capability in Capability}
+    return StaticAuthenticator(
+        {AUTH_TOKEN: Principal(AUTH_IDENTITY, grants)}
+    )
+
+
+async def verify_upstream_features(host: str, port: int, topic: str) -> None:
+    """Fail broker startup unless auth, claims, and packed delivery all work."""
+    try:
+        await BrokerClient.connect(
+            host,
+            port,
+            reconnect=False,
+            auth={"token": f"{AUTH_TOKEN}-invalid"},
+        )
+    except AuthError as exc:
+        if exc.code != "auth_rejected":
+            raise RuntimeError(f"unexpected auth probe code: {exc.code}") from exc
+    else:
+        raise RuntimeError("invalid auth token was accepted")
+
+    client = await BrokerClient.connect(
+        host,
+        port,
+        reconnect=False,
+        auth=AUTH_CREDENTIALS,
+    )
+    try:
+        await client.register_topic(topic, replayable=False)
+        subscription = await client.subscribe(topic)
+        result = await client.publish(topic, "packed-delivery-probe")
+        if not result.accepted:
+            raise RuntimeError(f"feature probe publish rejected: {result.error}")
+        delivery = await asyncio.wait_for(anext(subscription), timeout=3.0)
+        if delivery.message.payload != "packed-delivery-probe":
+            raise RuntimeError("packed delivery probe payload mismatch")
+        await subscription.ack(delivery)
+        await subscription.unsubscribe()
+        await client.unregister(topic)
+    finally:
+        await client.close()
 
 
 # --- OpenTelemetry (broker-side metrics via pubsub.observability.otel) -----
@@ -148,7 +205,11 @@ async def connect_broker(
     attempt = 0
     while True:
         try:
-            return await BrokerClient.connect(PUBSUB_HOST, PUBSUB_PORT)
+            return await BrokerClient.connect(
+                PUBSUB_HOST,
+                PUBSUB_PORT,
+                auth=AUTH_CREDENTIALS,
+            )
         except (OSError, ConnectionError) as exc:
             attempt += 1
             if loop.time() - start > deadline:

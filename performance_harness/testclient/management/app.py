@@ -15,13 +15,12 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
-
 from pubsub.server.durability.sqlite import SQLiteDurability
 
 from testclient import config
 from testclient.management import brokerotel
-from testclient.management.stats import Stats
 from testclient.management.dashboard import DASHBOARD_HTML
+from testclient.management.stats import Stats
 
 log = config.setup_logging().getChild("management")
 

@@ -170,11 +170,10 @@ async def run() -> None:
         config.PAYLOAD_BYTES,
     )
 
-    # Register in the background so concurrent producers don't stall on the
-    # single SQLite writer at startup; publishing an as-yet-unregistered topic
-    # still succeeds (it is simply replayable=0 until registration lands).
+    # Authenticated publish requires a durable claim. Do not start load workers
+    # until every concrete data topic is owned by the harness principal.
+    await _register_all(client)
     tasks: list[asyncio.Task[None]] = [
-        asyncio.create_task(_register_all(client)),
         asyncio.create_task(_reporter()),
         asyncio.create_task(config.heartbeat_loop(client, "producer", _payload_fn(workers))),
     ]

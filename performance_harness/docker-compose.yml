@@ -13,11 +13,16 @@ x-image: &image
   networks: [pubsub]
   restart: unless-stopped
 
+x-auth-env: &auth-env
+  AUTH_TOKEN: ${AUTH_TOKEN:-pubsub-harness}
+  AUTH_IDENTITY: ${AUTH_IDENTITY:-pubsub-harness}
+
 services:
   controller:
     <<: *image
     command: python -m testclient.controller
     environment:
+      <<: *auth-env
       BIND_HOST: 0.0.0.0
       PUBSUB_PORT: 8765
       DURABILITY: ${DURABILITY:-sqlite}
@@ -45,6 +50,7 @@ services:
     <<: *image
     command: python -m testclient.producer
     environment:
+      <<: *auth-env
       PUBSUB_HOST: controller
       PUBSUB_PORT: 8765
       # Moderate default keeps the consumer draining so retries/DLQ show cleanly.
@@ -61,6 +67,7 @@ services:
     <<: *image
     command: python -m testclient.consumer
     environment:
+      <<: *auth-env
       PUBSUB_HOST: controller
       PUBSUB_PORT: 8765
       NACK_RATE: ${NACK_RATE:-0.05}          # random transient nacks (retries)
@@ -74,6 +81,7 @@ services:
     <<: *image
     command: uvicorn testclient.management.app:app --host 0.0.0.0 --port 8080
     environment:
+      <<: *auth-env
       PUBSUB_HOST: controller
       PUBSUB_PORT: 8765
       PUBSUB_DB: /data/pubsub.db

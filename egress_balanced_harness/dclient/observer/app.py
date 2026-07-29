@@ -22,10 +22,10 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from dclient import config
-from dclient.postgres_durability import PostgresDurability
 from dclient.observer import brokerotel
-from dclient.observer.stats import Stats
 from dclient.observer.dashboard import DASHBOARD_HTML
+from dclient.observer.stats import Stats
+from dclient.postgres_durability import PostgresDurability
 
 log = config.setup_logging().getChild("observer")
 

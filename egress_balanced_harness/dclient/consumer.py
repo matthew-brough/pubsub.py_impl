@@ -37,8 +37,7 @@ async def _pump(client, selector: str, stop: asyncio.Event) -> None:
         log.info("subscribed %s", selector)
         try:
             async for delivery in sub:
-                if delivery.attempt > _max_attempt:
-                    _max_attempt = delivery.attempt
+                _max_attempt = max(_max_attempt, delivery.attempt)
                 if config.CONSUMER_WORK_MS:
                     await asyncio.sleep(config.CONSUMER_WORK_MS / 1000.0)
                 seq = delivery.message.extras.get("seq")

@@ -25,6 +25,11 @@ library property), and an `observer` that aggregates the cluster firehose /
 per-broker OTel. Per-harness env knobs (`DURABILITY`, `PG_MAX_WRITERS`,
 `PRODUCER_RATE`, fanout width, …) are documented in each harness `README`.
 
+Single-node and egress rigs pin upstream `pubsub.py` master at `b7f1651a`.
+Both require authenticated connections and claimed publish subjects. Broker
+startup probes rejected/valid auth, claim/release, and packed-delivery decoding;
+fanout matrix cells then exercise packed-message reuse under load.
+
 ## Drivers
 
 - `performance_harness/matrix_driver.py` — single-node matrix. Scrapes one

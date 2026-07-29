@@ -203,8 +203,8 @@ wheels = [
 
 [[package]]
 name = "pubsub-py"
-version = "0.2.1"
-source = { git = "https://github.com/matthew-brough/pubsub.py.git?branch=master#b361947fa4ebc69eda51380a18eb61d6e255a3aa" }
+version = "1.0.0"
+source = { git = "https://github.com/matthew-brough/pubsub.py.git?branch=master#b7f1651aa4c9380b627fd9b8d51539aedd4874ad" }
 dependencies = [
     { name = "msgpack" },
 ]

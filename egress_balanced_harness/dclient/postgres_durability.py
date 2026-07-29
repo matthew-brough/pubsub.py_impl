@@ -29,15 +29,17 @@ specifies — adequate for the harness; ids are not namespaced by broker.
 """
 
 import asyncio
+import logging
 import os
 import socket
 from typing import Self, cast
 
 import asyncpg
 import msgpack
-
 from pubsub.server.durability.abc import DurabilityBackend
 from pubsub.shared.types import DLQEntry, Message, MessagePackValue
+
+_LOG = logging.getLogger("dclient.postgres_durability")
 
 # Tuning knobs (Postgres-specific; no SQLite equivalent).
 _MAX_WRITERS = max(1, int(os.environ.get("PG_MAX_WRITERS", "4")))
@@ -55,8 +57,12 @@ _BROKER_ID = os.environ.get("INSTANCE_ID") or socket.gethostname()
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS topics (
     topic      TEXT PRIMARY KEY,
-    replayable BOOLEAN NOT NULL
+    replayable BOOLEAN NOT NULL,
+    owner      TEXT,
+    claimed_at DOUBLE PRECISION
 );
+ALTER TABLE topics ADD COLUMN IF NOT EXISTS owner TEXT;
+ALTER TABLE topics ADD COLUMN IF NOT EXISTS claimed_at DOUBLE PRECISION;
 CREATE TABLE IF NOT EXISTS messages (
     seq        BIGSERIAL PRIMARY KEY,
     message_id TEXT NOT NULL,
@@ -140,7 +146,7 @@ class PostgresDurability(DurabilityBackend):
                     server_settings={"synchronous_commit": _SYNC_COMMIT},
                 )
                 break
-            except (OSError, asyncpg.PostgresError) as exc:  # noqa: PERF203
+            except (OSError, asyncpg.PostgresError) as exc:
                 last = exc
                 await asyncio.sleep(1.0)
         if pool is None:  # pragma: no cover - only on a truly unreachable DB
@@ -156,6 +162,50 @@ class PostgresDurability(DurabilityBackend):
             topic,
             replayable,
         )
+
+    async def claim_topic(
+        self,
+        topic: str,
+        owner: str,
+        *,
+        replayable: bool,
+    ) -> bool:
+        row = await self._pool.fetchrow(
+            "INSERT INTO topics (topic, replayable, owner, claimed_at) "
+            "VALUES ($1, $2, $3, EXTRACT(EPOCH FROM clock_timestamp())) "
+            "ON CONFLICT (topic) DO UPDATE SET "
+            "replayable=EXCLUDED.replayable, owner=EXCLUDED.owner, "
+            "claimed_at=EXCLUDED.claimed_at "
+            "WHERE topics.owner IS NULL OR topics.owner=EXCLUDED.owner "
+            "RETURNING topic",
+            topic,
+            replayable,
+            owner,
+        )
+        return row is not None
+
+    async def release_topic(self, topic: str, owner: str) -> bool:
+        row = await self._pool.fetchrow(
+            "UPDATE topics SET owner=NULL, claimed_at=NULL "
+            "WHERE topic=$1 AND owner=$2 RETURNING topic",
+            topic,
+            owner,
+        )
+        return row is not None
+
+    async def list_claims(self) -> list[tuple[str, str, bool]]:
+        rows = await self._pool.fetch(
+            "SELECT topic, owner, replayable FROM topics "
+            "WHERE owner IS NOT NULL ORDER BY topic"
+        )
+        return [
+            (
+                cast(str, row["topic"]),
+                cast(str, row["owner"]),
+                bool(row["replayable"]),
+            )
+            for row in rows
+        ]
 
     async def append(self, message: Message[MessagePackValue]) -> None:
         params = (
@@ -193,11 +243,10 @@ class PostgresDurability(DurabilityBackend):
             batch = self._append_queue
             self._append_queue = []
             try:
-                async with self._pool.acquire() as conn:
-                    async with conn.transaction():
-                        await conn.executemany(
-                            _INSERT_MESSAGE, [p for p, _ in batch]
-                        )
+                async with self._pool.acquire() as conn, conn.transaction():
+                    await conn.executemany(
+                        _INSERT_MESSAGE, [p for p, _ in batch]
+                    )
             except BaseException as exc:  # noqa: BLE001 - relay to every waiter
                 for _, fut in batch:
                     if not fut.done():
@@ -282,10 +331,14 @@ class PostgresDurability(DurabilityBackend):
                 "SELECT COUNT(*) FROM messages WHERE replayable=true"
             )
             rows = await self._pool.fetch(
-                "SELECT topic, replayable FROM topics ORDER BY topic"
+                "SELECT topic, replayable, owner FROM topics ORDER BY topic"
             )
             out["topics"] = [
-                {"topic": r["topic"], "replayable": bool(r["replayable"])}
+                {
+                    "topic": r["topic"],
+                    "replayable": bool(r["replayable"]),
+                    "owner": r["owner"],
+                }
                 for r in rows
             ]
         except (OSError, asyncpg.PostgresError):
@@ -330,8 +383,8 @@ class PostgresDurability(DurabilityBackend):
         for task in list(self._writers):
             try:
                 await task
-            except BaseException:  # noqa: BLE001 - waiters already got the error
-                pass
+            except BaseException as exc:  # noqa: BLE001 - waiters already notified
+                _LOG.debug("append worker stopped with error: %s", exc)
         pending, self._append_queue = self._append_queue, []
         for _, fut in pending:
             if not fut.done():

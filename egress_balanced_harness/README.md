@@ -75,6 +75,12 @@ nginx and the producer broadcaster pick up new/departed brokers within
 PRODUCER_RATE=max PG_SYNCHRONOUS_COMMIT=off docker compose up --build
 ```
 
+Every service authenticates with `StaticAuthenticator`; `AUTH_TOKEN` and
+`AUTH_IDENTITY` default to `pubsub-harness`. Each broker startup rejects an
+invalid token, then verifies valid auth, durable topic claim/release, and a
+delivery round trip through packed transport. Producers claim every replicated
+data topic on each broker before entering load.
+
 ## Services
 
 | Service | Count | Role |
@@ -95,6 +101,8 @@ PRODUCER_RATE=max PG_SYNCHRONOUS_COMMIT=off docker compose up --build
 | `PAYLOAD_BYTES` | `256` | Message payload size. |
 | `NACK_RATE` | `0.02` | Transient nack fraction. |
 | `POISON_EVERY` | `500` | Every Nth seq → always-nack → DLQ. |
+| `AUTH_TOKEN` | `pubsub-harness` | Shared benchmark credential; override for a run. |
+| `AUTH_IDENTITY` | `pubsub-harness` | Shared claim owner across replicated brokers. |
 | `PG_SYNCHRONOUS_COMMIT` | `on` | `off` trades a crash window for a higher ceiling. |
 | `PG_MAX_WRITERS` | `4` | Concurrent Postgres commit workers per broker. |
 | `RERESOLVE_SECONDS` | `10` | Broadcast / fleet / metrics re-resolve interval. |

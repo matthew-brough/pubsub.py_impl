@@ -25,6 +25,15 @@ class NullDurability(DurabilityBackend):
     async def register_topic(self, topic: str, *, replayable: bool) -> None:
         return None
 
+    async def claim_topic(self, topic: str, owner: str, *, replayable: bool) -> bool:
+        return True
+
+    async def release_topic(self, topic: str, owner: str) -> bool:
+        return True
+
+    async def list_claims(self) -> list[tuple[str, str, bool]]:
+        return []
+
     async def append(self, message: Message[MessagePackValue]) -> None:
         return None
 

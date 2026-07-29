@@ -13,7 +13,7 @@ _KEYS = ("publishes_ok", "publishes_rej", "deliveries", "acks", "nacks", "retry_
 
 
 def fetch(url: str, timeout: float = 2.0) -> str:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - internal URL
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
         return resp.read().decode()
 
 

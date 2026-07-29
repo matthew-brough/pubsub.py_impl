@@ -18,6 +18,8 @@ import os
 import random
 import time
 
+from pubsub.transport.client import BrokerClient
+
 from dclient import config
 
 log = config.setup_logging().getChild("producer")
@@ -33,6 +35,10 @@ async def _register_all(client) -> None:
         try:
             for topic in config.ALL_TOPICS:
                 await client.register_topic(topic, replayable=True)
+            await client.register_topic(
+                config.stats_topic("producer"),
+                replayable=False,
+            )
             return
         except (ConnectionError, OSError) as exc:
             log.warning("register failed (%s); retrying", exc)
@@ -43,9 +49,9 @@ class Broadcaster:
     """Maintains one publish connection per live broker replica, re-resolving."""
 
     def __init__(self) -> None:
-        self._clients: dict[tuple[str, int], object] = {}
+        self._clients: dict[tuple[str, int], BrokerClient] = {}
 
-    def clients(self) -> list:
+    def clients(self) -> list[BrokerClient]:
         return list(self._clients.values())
 
     async def maintain(self, stop: asyncio.Event) -> None:
@@ -56,8 +62,8 @@ class Broadcaster:
                     client = self._clients.pop(key)
                     try:
                         await client.close()
-                    except Exception:  # noqa: BLE001
-                        pass
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("departed broker close failed: %s", exc)
                     log.info("broadcast dropped departed broker %s:%d", *key)
             for host, port in targets:
                 if (host, port) in self._clients:
@@ -66,7 +72,7 @@ class Broadcaster:
                     client = await config.connect_broker_at(log, host, port, deadline=5.0)
                 except (OSError, ConnectionError):
                     continue
-                asyncio.create_task(_register_all(client))
+                await _register_all(client)
                 self._clients[(host, port)] = client
                 log.info("broadcast attached to broker %s:%d", host, port)
             await asyncio.sleep(max(config.RERESOLVE_SECONDS, 1.0))
@@ -75,8 +81,8 @@ class Broadcaster:
         for client in self._clients.values():
             try:
                 await client.close()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                log.debug("broker client close failed: %s", exc)
 
 
 def _payload() -> bytes:

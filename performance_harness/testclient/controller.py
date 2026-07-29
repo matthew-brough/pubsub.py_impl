@@ -44,13 +44,24 @@ async def run() -> None:
     observer = None
     if config.OTEL_ENABLED:
         from pubsub.observability.otel import OTelObserver
+
         from testclient.otel import setup_meter
 
         observer = OTelObserver(setup_meter())
 
     broker = Broker(backend, retry_policy=policy, observer=observer)
-    server = BrokerServer(broker, host=BIND_HOST, port=config.PUBSUB_PORT)
+    server = BrokerServer(
+        broker,
+        host=BIND_HOST,
+        port=config.PUBSUB_PORT,
+        authenticator=config.make_authenticator(),
+    )
     await server.start()
+    await config.verify_upstream_features(
+        "127.0.0.1",
+        server.port,
+        f"_harness.auth_probe.{config.INSTANCE_ID}",
+    )
     import asyncio
 
     loop_impl = type(asyncio.get_running_loop()).__module__.split(".")[0]
